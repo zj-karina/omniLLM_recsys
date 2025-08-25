@@ -52,12 +52,12 @@ poetry install
 
 ```bash
 # Clone base library
-git clone https://github.com/zj-karina/any2any_trainer.git
+git clone https://github.com/your-username/any2any_trainer.git
 cd any2any_trainer
 pip install -e .
 
 # Clone this project
-git clone https://github.com/zj-karina/omniLLM_recsys.git
+git clone https://github.com/your-username/omniLLM_recsys.git
 cd fashion-recommendations-llm
 pip install -e .
 ```
