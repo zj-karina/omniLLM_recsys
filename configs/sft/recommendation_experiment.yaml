@@ -1,58 +1,37 @@
-# Recommendation experiment configuration
-# Based on omni_qwen.ipynb experiment
-
-# Basic parameters
-model_name_or_path: "Qwen/Qwen2.5-Omni-7B"
-model_type: "recommendation"  # New model type for recommendations
-
-# Recommendation-specific parameters
-id_vocab_size: 709036  # Size of item vocabulary (from Amazon Fashion 2023 dataset)
-id_dim: 512             # Dimension of item embeddings
-fusion_dim: 1024        # Hidden dimension for fusion head
-reduced_dim: 1024       # Reduced dimension for text embeddings
-
-# Dataset configuration
-dataset_name: "seniichev/amazon-fashion-2023-full"
-user_id_field: "user_id"
-item_id_field: "parent_asin"
-title_field: "title"
-max_history_length: 10
-min_history_length: 2
-
-# Training parameters
-output_dir: "./output/recommendation_model"
-per_device_train_batch_size: 1
-gradient_accumulation_steps: 16
-num_train_epochs: 3
-learning_rate: 1e-6  # Even lower learning rate to avoid NaN
-warmup_steps: 200  # More warmup steps
-max_steps: 10000
-max_grad_norm: 1.0  # Add gradient clipping
-
-# Optimization
-gradient_checkpointing: true
-bf16: false  # Use fp32 for stability
-fp16: false  # Disable mixed precision
+bf16: false
 dataloader_num_workers: 2
-remove_unused_columns: false
-
-# Logging
-logging_steps: 10
-save_steps: 10000  # Save model every 1000 steps
-report_to: "wandb"
-run_name: "recommendation_experiment"
-log_file: "logs/recommendation_training.log"
-
-# Early stopping - DISABLED
-early_stopping_patience: 0
+dataset_name: seniichev/amazon-fashion-2023-full
 early_stopping_min_delta: 0.001
-eval_steps: 0  # Disable validation
-evaluation_strategy: "no"  # Disable evaluation
-
-# Additional parameters
-save_total_limit: 3
+early_stopping_patience: 0
+eval_steps: 0
+evaluation_strategy: 'no'
+fp16: false
+fusion_dim: 1024
+gradient_accumulation_steps: 16
+gradient_checkpointing: true
+id_dim: 512
+id_vocab_size: 709036
+item_id_field: parent_asin
+learning_rate: 1e-6
 load_best_model_at_end: true
-metric_for_best_model: "loss"
-
-# Seed
+log_file: logs/recommendation_training.log
+logging_steps: 10
+max_grad_norm: 1.0
+max_history_length: 10
+metric_for_best_model: loss
+min_history_length: 2
+model_name_or_path: Qwen/Qwen2.5-Omni-7B
+model_type: recommendation
+num_train_epochs: 3
+output_dir: ./output/recommendation_model
+per_device_train_batch_size: 1
+reduced_dim: 1024
+remove_unused_columns: false
+report_to: wandb
+run_name: recommendation_experiment
+save_steps: 1000
+save_total_limit: 10
 seed: 42
+title_field: title
+user_id_field: user_id
+warmup_steps: 200

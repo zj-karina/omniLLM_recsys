@@ -1,84 +1,57 @@
-# Multi-task configuration for omnimodal LLM Amazon Fashion
-# Training on multiple tasks: recommendations, analysis, comparison, personalization
-
-# Basic parameters
-model_name_or_path: "Qwen/Qwen2.5-7B-Instruct"
-modalities:
-  input: ["image", "text"]
-  output: ["text"]
-
-# Vision encoder
+bf16: true
+conversation_field: conversations
+dataloader_num_workers: 2
+dataset:
+- fashion_multitask_dataset/conversations/train.jsonl
+early_stopping_min_delta: 0.001
+early_stopping_patience: 0
 encoders:
   image:
-    model: "openai/clip-vit-large-patch14"
     freeze: true
-    tokenizer_type: "discrete"
-
-# Projection layer
+    model: openai/clip-vit-large-patch14
+    tokenizer_type: discrete
+eval_steps: 0
+evaluation_strategy: 'no'
+freeze_llm: false
+freeze_vision_encoder: true
+generate_eval_examples: false
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 2e-5
+load_best_model_at_end: false
+log_file: logs/training.log
+logging_steps: 10
+max_new_tokens: 256
+max_seq_length: 4096
+modalities:
+  input:
+  - image
+  - text
+  output:
+  - text
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+num_train_epochs: 3
+output_dir: ./output/fashion_multitask_model
+per_device_train_batch_size: 2
 projection:
-  type: "mlp"
+  dropout: 0.1
   hidden_size: 1024
   num_layers: 2
-  dropout: 0.1
-
-# Dataset - using existing quick_start_dataset
-dataset: ["fashion_multitask_dataset/conversations/train.jsonl"]
-conversation_field: "conversations"
-max_seq_length: 4096
-
-# Training parameters
-output_dir: "./output/fashion_multitask_model"
-per_device_train_batch_size: 2
-gradient_accumulation_steps: 8
-num_train_epochs: 3
-learning_rate: 2e-5
-warmup_steps: 100
-max_steps: 3000
-
-# Components
-freeze_vision_encoder: true
-freeze_llm: false
-train_projection_only: false
-
-# Optimization
-gradient_checkpointing: true
-bf16: true
-dataloader_num_workers: 2
+  type: mlp
 remove_unused_columns: false
-
-# Special tokens
-special_tokens:
-  image_start: "<img>"
-  image_end: "</img>"
-
-# Logging
-logging_steps: 10
-report_to: "wandb"
-run_name: "fashion_multitask_training"
-log_file: "logs/training.log"
-
-# Early stopping - DISABLED
-early_stopping_patience: 0
-early_stopping_min_delta: 0.001
-eval_steps: 0  # Disable validation
-evaluation_strategy: "no"  # Disable evaluation
-save_steps: 10000
-
-# Additional parameters
-save_total_limit: 1  # Keep only 1 checkpoint (overwrite)
-load_best_model_at_end: false  # Don't load best model since no validation
-
-# Generation - DISABLED
-generate_eval_examples: false
-max_new_tokens: 256
-
-# Seed
+report_to: wandb
+run_name: fashion_multitask_training
+save_steps: 1000
+save_total_limit: 5
 seed: 42
-
-# Task weights
+special_tokens:
+  image_end: </img>
+  image_start: <img>
 task_weights:
-  product_analysis: 1.0
   next_purchase_recommendation: 1.2
-  product_comparison: 1.0
   personalized_recommendation: 1.1
+  product_analysis: 1.0
+  product_comparison: 1.0
   review_generation: 0.8
+train_projection_only: false
+warmup_steps: 100
