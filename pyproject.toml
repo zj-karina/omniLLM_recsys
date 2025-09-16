@@ -8,16 +8,19 @@ packages = []
 
 [tool.poetry.dependencies]
 python = "^3.10"
-any2any-trainer = {git = "https://github.com/your-username/any2any_trainer.git"}
+# any2any-trainer is included locally in src/ directory
 datasets = "^2.0.0"
 tqdm = "^4.60.0"
 torch = "^2.0.0"
 transformers = "^4.30.0"
 pillow = "^8.0.0"
 requests = "^2.25.0"
+pyyaml = "^6.0"
 pandas = "^1.5.0"
 numpy = "^1.21.0"
 scikit-learn = "^1.0.0"
+# wandb = "^0.15.0"  # Already installed
+rich = "^13.0.0"
 
 [build-system]
 requires = ["poetry-core"]

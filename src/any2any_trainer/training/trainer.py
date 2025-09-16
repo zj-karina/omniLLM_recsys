@@ -226,50 +226,331 @@ class SimpleTrainer:
         self.tokenizer = tokenizer
         self.config = config
         
+        # Setup logging
+        self.logger = get_logger(__name__)
+        
+        # Move model to GPU if available
+        if hasattr(config, 'device') and config.device != 'cpu':
+            self.model = self.model.to(config.device)
+            self.logger.info(f"🚀 Model moved to {config.device}")
+        if config.log_file:
+            from pathlib import Path
+            log_path = Path(config.log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"📝 Logging to file: {config.log_file}")
+        
+        # Setup Weights & Biases
+        self.wandb = None
+        self.wandb_initialized = False
+        if config.report_to == "wandb":
+            try:
+                import wandb
+                self.wandb = wandb
+                
+                # Try online mode first
+                try:
+                    run = wandb.init(
+                        project="fashion-recommendations-llm",
+                        name=config.run_name or "fashion_multitask_training",
+                        config=config.dict() if hasattr(config, 'dict') else config.__dict__,
+                        mode="online"
+                    )
+                    self.wandb_initialized = True
+                    self.wandb_run = run
+                    self.logger.info("🔮 Weights & Biases initialized (online mode)")
+                    self.logger.info(f"🌐 Dashboard URL: {run.url}")
+                except Exception as online_error:
+                    self.logger.warning(f"⚠️ Online mode failed: {online_error}")
+                    # Fallback to offline mode
+                    try:
+                        run = wandb.init(
+                            project="fashion-recommendations-llm",
+                            name=config.run_name or "fashion_multitask_training",
+                            config=config.dict() if hasattr(config, 'dict') else config.__dict__,
+                            mode="offline"
+                        )
+                        self.wandb_initialized = True
+                        self.wandb_run = run
+                        self.logger.info("🔮 Weights & Biases initialized (offline mode)")
+                        self.logger.info("📁 Run data saved locally. Use 'wandb sync' to upload later.")
+                    except Exception as offline_error:
+                        self.logger.warning(f"⚠️ Offline mode also failed: {offline_error}")
+                        self.wandb_initialized = False
+                        
+            except ImportError:
+                self.logger.warning("⚠️ wandb not installed, skipping W&B logging")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to initialize wandb: {e}")
+                self.wandb_initialized = False
+        
         # Setup optimizer
         self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=config.learning_rate,
             weight_decay=0.01
         )
+        
+        # Training state
+        self.global_step = 0
+        self.epoch = 0
+        
+        # Early stopping state
+        self.best_val_loss = float('inf')
+        self.patience_counter = 0
+        self.patience = getattr(config, 'early_stopping_patience', 3)  # Stop if no improvement for N validations
+        self.min_delta = getattr(config, 'early_stopping_min_delta', 0.001)  # Minimum change to qualify as improvement
+        self.eval_steps = getattr(config, 'eval_steps', 1000)  # Validate every N steps
     
     def train_step(self, batch):
         """Single training step."""
         self.model.train()
         self.optimizer.zero_grad()
         
-        # Move batch to device
-        device = next(self.model.parameters()).device
-        batch = {k: v.to(device) if hasattr(v, 'to') else v for k, v in batch.items()}
+        # Handle different model types
+        if hasattr(self.model, 'forward') and 'text' in batch and 'id_ids' in batch:
+            # Recommendation model
+            device = next(self.model.parameters()).device
+            # Ensure all tensors are on the correct device
+            if 'labels' in batch and hasattr(batch['labels'], 'to'):
+                batch['labels'] = batch['labels'].to(device)
+            # id_ids will be moved to device in the model forward pass
+            
+            outputs = self.model(
+                text=batch['text'],
+                id_ids=batch['id_ids'],
+                labels=batch['labels']
+            )
+            loss = outputs['loss']
+        else:
+            # Standard multimodal model
+            device = next(self.model.parameters()).device
+            batch = {k: v.to(device) if hasattr(v, 'to') else v for k, v in batch.items()}
+            
+            outputs = self.model(**batch)
+            loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
         
-        outputs = self.model(**batch)
-        loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
+        # Check for NaN loss before backward pass
+        if torch.isnan(loss):
+            self.logger.warning(f"⚠️ NaN loss detected at step {self.global_step}, skipping this batch")
+            return float('nan')
         
         loss.backward()
+        
+        # Gradient clipping
+        if hasattr(self.config, 'max_grad_norm') and self.config.max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+        
         self.optimizer.step()
+        
+        self.global_step += 1
+        
+        # Log to W&B
+        if self.wandb and self.wandb_initialized and self.global_step % self.config.logging_steps == 0:
+            try:
+                self.wandb.log({
+                    "train/loss": loss.item(),
+                    "train/learning_rate": self.optimizer.param_groups[0]['lr'],
+                    "train/global_step": self.global_step,
+                    "train/epoch": self.epoch
+                })
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to log to W&B: {e}")
+                self.wandb_initialized = False
         
         return loss.item()
     
-    def train(self, train_dataloader, num_epochs: int = 3):
-        """Simple training loop."""
-        logger.info(f"🎯 Starting training for {num_epochs} epochs...")
+    def validate(self, val_dataloader):
+        """Validate the model and return validation loss."""
+        import time
+        start_time = time.time()
+        self.logger.info("🔍 Starting validation...")
+        self.model.eval()
+        total_loss = 0
+        num_batches = 0
+        correct = 0
+        total = 0
+        
+        # Progress tracking
+        total_val_batches = len(val_dataloader)
+        self.logger.info(f"📊 Validating on {total_val_batches} batches...")
+        
+        # Progress reporting every 10% of batches
+        report_interval = max(1, total_val_batches // 10)
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(val_dataloader):
+                # Handle different model types
+                if hasattr(self.model, 'forward') and 'text' in batch and 'id_ids' in batch:
+                    # Recommendation model
+                    device = next(self.model.parameters()).device
+                    # Ensure all tensors are on the correct device
+                    if 'labels' in batch and hasattr(batch['labels'], 'to'):
+                        batch['labels'] = batch['labels'].to(device)
+                    if 'id_ids' in batch:
+                        batch['id_ids'] = [ids.to(device) if hasattr(ids, 'to') else ids for ids in batch['id_ids']]
+                    
+                    outputs = self.model(
+                        text=batch['text'],
+                        id_ids=batch['id_ids'],
+                        labels=batch['labels']
+                    )
+                    loss = outputs['loss']
+                    
+                    # Calculate accuracy for recommendation model
+                    logits = outputs['logits']
+                    preds = logits.argmax(dim=-1)
+                    correct += (preds == batch['labels']).sum().item()
+                    total += len(batch['labels'])
+                else:
+                    # Standard multimodal model
+                    device = next(self.model.parameters()).device
+                    batch = {k: v.to(device) if hasattr(v, 'to') else v for k, v in batch.items()}
+                    
+                    outputs = self.model(**batch)
+                    loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
+                
+                total_loss += loss.item()
+                num_batches += 1
+                
+                # Progress logging every 10% of validation
+                if (batch_idx + 1) % max(1, total_val_batches // 10) == 0:
+                    progress = (batch_idx + 1) / total_val_batches * 100
+                    current_loss = total_loss / num_batches
+                    self.logger.info(f"📊 Validation progress: {progress:.1f}% - Current loss: {current_loss:.4f}")
+        
+        avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+        accuracy = correct / total if total > 0 else 0
+        
+        # Calculate validation time
+        validation_time = time.time() - start_time
+        
+        self.logger.info("=" * 60)
+        self.logger.info(f"📊 VALIDATION RESULTS:")
+        self.logger.info(f"   Loss: {avg_loss:.4f}")
+        if total > 0:
+            self.logger.info(f"   Accuracy: {accuracy:.4f} ({correct}/{total})")
+        self.logger.info(f"   Batches processed: {num_batches}")
+        self.logger.info(f"   Time: {validation_time:.2f}s")
+        self.logger.info("=" * 60)
+        
+        self.model.train()
+        return avg_loss
+    
+    def train(self, train_dataloader, val_dataloader=None, num_epochs: int = 3):
+        """Training loop with early stopping based on validation loss."""
+        self.logger.info(f"🎯 Starting training for {num_epochs} epochs...")
+        
+        # Check if validation is disabled
+        if self.eval_steps <= 0 or getattr(self.config, 'evaluation_strategy', 'steps') == 'no':
+            self.logger.info("📊 Validation disabled - training without validation")
+            val_dataloader = None
+        else:
+            self.logger.info(f"📊 Validation every {self.eval_steps} steps")
+        
+        if val_dataloader is None:
+            self.logger.info("ℹ️ No validation dataloader provided. Training without validation.")
         
         for epoch in range(num_epochs):
+            self.epoch = epoch
             total_loss = 0
             num_batches = 0
             
-            for batch in train_dataloader:
+            # Training phase
+            for batch_idx, batch in enumerate(train_dataloader):
                 loss = self.train_step(batch)
                 total_loss += loss
                 num_batches += 1
                 
-                if num_batches % 10 == 0:
-                    logger.info(f"Epoch {epoch+1}/{num_epochs}, Batch {num_batches}, Loss: {loss:.4f}")
+                # Log progress
+                if num_batches % self.config.logging_steps == 0:
+                    self.logger.info(f"Epoch {epoch+1}/{num_epochs}, Step {self.global_step}, Loss: {loss:.4f}")
+                
+                # Save checkpoint periodically
+                if hasattr(self.config, 'save_steps') and self.config.save_steps > 0 and self.global_step % self.config.save_steps == 0:
+                    self.save_checkpoint()
+                
+                # Skip validation if disabled
+                if val_dataloader is not None and self.eval_steps > 0 and getattr(self.config, 'evaluation_strategy', 'steps') != 'no' and self.global_step % self.eval_steps == 0:
+                    self.logger.info(f"🔍 Running validation at step {self.global_step}...")
+                    if hasattr(self, 'wandb_run') and self.wandb_run:
+                        self.logger.info(f"🌐 Monitor progress at: {self.wandb_run.url}")
+                    val_loss = self.validate(val_dataloader)
+                    
+                    # Check for improvement
+                    improvement = self.best_val_loss - val_loss
+                    if improvement > self.min_delta:
+                        self.best_val_loss = val_loss
+                        self.patience_counter = 0
+                        self.logger.info(f"🎉 New best validation loss: {val_loss:.4f} (improvement: {improvement:.4f})")
+                        
+                        # Save best model
+                        self.save_model(self.config.output_dir)
+                        self.logger.info(f"💾 Best model saved to {self.config.output_dir}")
+                    else:
+                        self.patience_counter += 1
+                        self.logger.info(f"⏳ No improvement for {self.patience_counter} validations (best: {self.best_val_loss:.4f})")
+                    
+                    # Log validation metrics to W&B
+                    if self.wandb and self.wandb_initialized:
+                        try:
+                            self.wandb.log({
+                                "val/loss": val_loss,
+                                "val/best_loss": self.best_val_loss,
+                                "val/patience_counter": self.patience_counter,
+                                "val/global_step": self.global_step
+                            })
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Failed to log validation metrics to W&B: {e}")
+                            self.wandb_initialized = False
+                    
+                    # Early stopping check
+                    if self.patience_counter >= self.patience:
+                        self.logger.info(f"🛑 Early stopping triggered at step {self.global_step}!")
+                        self.logger.info(f"Best validation loss: {self.best_val_loss:.4f}")
+                        return
             
-            avg_loss = total_loss / num_batches if num_batches > 0 else 0
-            logger.info(f"✅ Epoch {epoch+1} completed. Average loss: {avg_loss:.4f}")
+            avg_train_loss = total_loss / num_batches if num_batches > 0 else 0
+            self.logger.info(f"✅ Epoch {epoch+1} completed. Average train loss: {avg_train_loss:.4f}")
+            
+            # Log epoch metrics to W&B
+            if self.wandb and self.wandb_initialized:
+                try:
+                    self.wandb.log({
+                        "train/epoch_loss": avg_train_loss,
+                        "train/epoch": epoch + 1,
+                        "train/global_step": self.global_step
+                    })
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to log epoch metrics to W&B: {e}")
+                    self.wandb_initialized = False
         
-        logger.info("🎉 Training completed!")
+        self.logger.info("🎉 Training completed!")
+        
+        # Final save
+        self.save_model(self.config.output_dir)
+        
+        # Close W&B and show dashboard URL
+        if self.wandb and self.wandb_initialized:
+            try:
+                self.wandb.finish()
+                if hasattr(self, 'wandb_run') and self.wandb_run:
+                    self.logger.info("=" * 60)
+                    self.logger.info("🌐 W&B DASHBOARD:")
+                    self.logger.info(f"   URL: {self.wandb_run.url}")
+                    self.logger.info("   You can view your training metrics and graphs there!")
+                    self.logger.info("=" * 60)
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to finish W&B: {e}")
+    
+    def save_checkpoint(self):
+        """Save checkpoint during training."""
+        checkpoint_dir = f"{self.config.output_dir}/checkpoint-{self.global_step}"
+        self.save_model(checkpoint_dir)
+        self.logger.info(f"💾 Checkpoint saved at step {self.global_step}")
+        
+        # Clean up old checkpoints if save_total_limit is set
+        if hasattr(self.config, 'save_total_limit') and self.config.save_total_limit > 0:
+            self._cleanup_old_checkpoints()
     
     def save_model(self, output_dir: str):
         """Save the model."""
@@ -283,4 +564,44 @@ class SimpleTrainer:
         if hasattr(self.tokenizer, 'save_pretrained'):
             self.tokenizer.save_pretrained(output_dir)
         
-        logger.info(f"💾 Model saved to {output_dir}") 
+        # Save optimizer state
+        torch.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+        
+        # Save training state
+        training_state = {
+            'global_step': self.global_step,
+            'epoch': self.epoch,
+            'config': self.config.dict() if hasattr(self.config, 'dict') else self.config.__dict__
+        }
+        torch.save(training_state, os.path.join(output_dir, "training_state.pt"))
+    
+    def _cleanup_old_checkpoints(self):
+        """Clean up old checkpoints to respect save_total_limit."""
+        import os
+        import glob
+        import shutil
+        
+        # Find all checkpoint directories
+        checkpoint_pattern = os.path.join(self.config.output_dir, "checkpoint-*")
+        checkpoint_dirs = glob.glob(checkpoint_pattern)
+        
+        if len(checkpoint_dirs) <= self.config.save_total_limit:
+            return
+        
+        # Sort by step number (extract step from directory name)
+        def extract_step(checkpoint_dir):
+            try:
+                return int(checkpoint_dir.split("checkpoint-")[-1])
+            except:
+                return 0
+        
+        checkpoint_dirs.sort(key=extract_step, reverse=True)
+        
+        # Remove oldest checkpoints
+        checkpoints_to_remove = checkpoint_dirs[self.config.save_total_limit:]
+        for checkpoint_dir in checkpoints_to_remove:
+            try:
+                shutil.rmtree(checkpoint_dir)
+                self.logger.info(f"🗑️ Removed old checkpoint: {checkpoint_dir}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to remove checkpoint {checkpoint_dir}: {e}") 

@@ -30,7 +30,7 @@ max_seq_length: 4096
 output_dir: "./output/fashion_multitask_model"
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 8
-num_train_epochs: 3
+num_train_epochs: 1
 learning_rate: 2e-5
 warmup_steps: 100
 max_steps: 3000
@@ -53,23 +53,20 @@ special_tokens:
 
 # Logging
 logging_steps: 10
+save_steps: 100
+eval_steps: 100
+evaluation_strategy: "steps"
 report_to: "wandb"
 run_name: "fashion_multitask_training"
 log_file: "logs/training.log"
 
-# Early stopping - DISABLED
-early_stopping_patience: 0
-early_stopping_min_delta: 0.001
-eval_steps: 0  # Disable validation
-evaluation_strategy: "no"  # Disable evaluation
-save_steps: 10000
-
 # Additional parameters
-save_total_limit: 1  # Keep only 1 checkpoint (overwrite)
-load_best_model_at_end: false  # Don't load best model since no validation
+save_total_limit: 3
+load_best_model_at_end: true
+metric_for_best_model: "loss"
 
-# Generation - DISABLED
-generate_eval_examples: false
+# Generation
+generate_eval_examples: true
 max_new_tokens: 256
 
 # Seed
@@ -82,3 +79,6 @@ task_weights:
   product_comparison: 1.0
   personalized_recommendation: 1.1
   review_generation: 0.8
+
+
+

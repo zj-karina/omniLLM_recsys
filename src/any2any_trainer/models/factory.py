@@ -228,5 +228,15 @@ def load_model(config: TrainingConfig) -> nn.Module:
         from .any2any import AnyToAnyModel
         return AnyToAnyModel.from_config(config)
     
+    elif config.model_type == "recommendation":
+        logger.info("🔄 Loading recommendation model...")
+        from .recommendation import RecommendationModel
+        return RecommendationModel.from_config(config)
+    
+    elif config.model_type == "semantic_recommendation":
+        logger.info("🔄 Loading semantic recommendation model...")
+        from .recommendation import SemanticIDRecommendationModel
+        return SemanticIDRecommendationModel.from_config(config)
+    
     else:
         raise ValueError(f"Unknown model type: {config.model_type}") 

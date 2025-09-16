@@ -16,10 +16,8 @@ def train_model():
     print("\nStarting model training...")
     
     # Update config to use found dataset
-    # config_path = "configs/sft/recommendation_experiment.yaml"
-    # config_path = "configs/sft/fashion_multitask.yaml"
-    config_path = "configs/sft/semantic_recommendation_experiment.yaml"
-
+    config_path = "configs/sft/fashion_multitask.yaml"
+    
     print(f"Using config: {config_path}")
     
     # Run training

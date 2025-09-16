@@ -80,6 +80,7 @@ class TrainingConfig(BaseModel):
     # Basic model parameters
     model_name_or_path: str
     model_type: Optional[str] = None  # автоопределение на основе modalities
+    device: str = "cpu"  # Device for model training
     
     # Modality configuration
     modalities: Dict[str, List[str]] = {"input": ["text"], "output": ["text"]}
@@ -130,6 +131,7 @@ class TrainingConfig(BaseModel):
     gradient_checkpointing: bool = False
     bf16: bool = True
     fp16: bool = False
+    max_grad_norm: float = 1.0  # Gradient clipping
     dataloader_num_workers: int = 4
     remove_unused_columns: bool = False
     
@@ -140,6 +142,12 @@ class TrainingConfig(BaseModel):
     # Logging
     report_to: str = "none"  # none, wandb, clearml, tensorboard
     run_name: Optional[str] = None
+    log_file: Optional[str] = None
+    
+    # Early stopping
+    early_stopping_patience: int = 3
+    early_stopping_min_delta: float = 0.001
+    eval_steps: int = 1000  # Validate every N steps
     
     # Generate examples during validation
     generate_eval_examples: bool = False
@@ -159,7 +167,7 @@ class TrainingConfig(BaseModel):
     def validate_model_type(cls, v):
         if v is None:
             return v  # Будет автоопределен в __init__
-        valid_types = ['standard', 'multimodal', 'any2any', 'unified']
+        valid_types = ['standard', 'multimodal', 'any2any', 'unified', 'recommendation', 'semantic_recommendation']
         if v not in valid_types:
             raise ValueError(f"model_type must be one of: {valid_types}, got {v}")
         return v

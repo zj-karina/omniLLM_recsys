@@ -1,5 +1,5 @@
-# Base multimodal training library
-any2any-trainer @ git+https://github.com/your-username/any2any_trainer.git
+# Base multimodal training library (local version)
+# any2any-trainer is included locally in src/ directory
 
 # Core dependencies
 datasets>=2.0.0
@@ -8,9 +8,13 @@ torch>=2.0.0
 transformers>=4.30.0
 pillow>=8.0.0
 requests>=2.25.0
+pyyaml>=6.0
 
 # Additional dependencies for fashion recommendations
 pandas>=1.5.0
 numpy>=1.21.0
 scikit-learn>=1.0.0
+
+# Logging and monitoring (wandb already installed)
+# rich>=13.0.0  # Already installed
 
