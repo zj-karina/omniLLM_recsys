@@ -103,6 +103,21 @@ class TrainingConfig(BaseModel):
     image_field: str = "image"
     max_seq_length: int = 2048
     
+    # Recommendation model specific parameters
+    dataset_name: Optional[str] = None
+    user_id_field: str = "user_id"
+    item_id_field: str = "parent_asin"
+    title_field: str = "title"
+    max_history_length: int = 10
+    min_history_length: int = 2
+    id_vocab_size: int = 1000000
+    id_dim: int = 512
+    fusion_dim: int = 1024
+    reduced_dim: int = 1024
+    use_semantic_ids: bool = False
+    vq_codebook_size: int = 10000
+    vq_codebook_dim: int = 256
+    
     # Training parameters (based on HF TrainingArguments)
     output_dir: str = "./output"
     per_device_train_batch_size: int = 1

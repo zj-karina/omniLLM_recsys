@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Улучшенный скрипт обучения рекомендаций с поддержкой max_steps.
+Быстрый тест recommendation модели с небольшим датасетом.
 """
 
 import sys
@@ -9,7 +9,7 @@ import torch
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from any2any_trainer.training.improved_trainer import ImprovedSimpleTrainer
 from any2any_trainer.models.recommendation import RecommendationModel
@@ -22,33 +22,36 @@ def main():
     """Main training function."""
     logger = get_logger(__name__)
     
-    # Parse arguments
-    if len(sys.argv) != 2:
-        print("Usage: python train_recommendation_improved.py <config_path>")
-        sys.exit(1)
-    
-    config_path = sys.argv[1]
-    
     try:
         # Load configuration
-        logger.info(f"📋 Loading configuration from {config_path}")
-        config = ConfigManager.load_config(config_path)
+        logger.info("📋 Loading configuration...")
+        config = ConfigManager.load_config("configs/sft/recommendation_experiment.yaml")
         logger.info("✅ Configuration loaded successfully")
+        
+        # Override with smaller dataset for testing
+        config.dataset_name = "seniichev/amazon-fashion-2023-full"
+        config.max_history_length = 5  # Smaller history
+        config.min_history_length = 2
+        config.num_train_epochs = 1  # Just 1 epoch for testing
+        config.save_steps = 50  # Save more frequently
+        config.logging_steps = 10  # Log more frequently
         
         # Load model
         logger.info("🤖 Loading model...")
         model = RecommendationModel.from_config(config)
         logger.info("✅ Model loaded successfully")
         
-        # Load datasets
-        logger.info("📊 Loading datasets...")
+        # Load datasets with limited size
+        logger.info("📊 Loading datasets (limited size for testing)...")
         train_df, val_df, test_df, item2index = prepare_recommendation_data(
-            dataset_name=getattr(config, 'dataset_name', 'seniichev/amazon-fashion-2023-full'),
-            user_id_field=getattr(config, 'user_id_field', 'user_id'),
-            item_id_field=getattr(config, 'item_id_field', 'parent_asin'),
-            title_field=getattr(config, 'title_field', 'title'),
-            max_history_length=getattr(config, 'max_history_length', 10),
-            min_history_length=getattr(config, 'min_history_length', 2)
+            dataset_name=config.dataset_name,
+            user_id_field=config.user_id_field,
+            item_id_field=config.item_id_field,
+            title_field=config.title_field,
+            max_history_length=config.max_history_length,
+            min_history_length=config.min_history_length,
+            max_users=1000,  # Limit to 1000 users for testing
+            max_items=5000   # Limit to 5000 items for testing
         )
         
         from any2any_trainer.data.recommendation_dataset import RecommendationDataset
@@ -56,15 +59,15 @@ def main():
         train_dataset = RecommendationDataset(
             train_df, 
             item2index, 
-            getattr(config, 'max_history_length', 10), 
-            getattr(config, 'min_history_length', 2)
+            config.max_history_length, 
+            config.min_history_length
         )
         
         val_dataset = RecommendationDataset(
             val_df, 
             item2index, 
-            getattr(config, 'max_history_length', 10), 
-            getattr(config, 'min_history_length', 2)
+            config.max_history_length, 
+            config.min_history_length
         )
         
         logger.info(f"✅ Train dataset: {len(train_dataset)} examples")
@@ -78,7 +81,7 @@ def main():
             batch_size=config.per_device_train_batch_size,
             shuffle=True,
             collate_fn=collator,
-            num_workers=getattr(config, 'dataloader_num_workers', 2)
+            num_workers=0  # No multiprocessing for testing
         )
         
         val_dataloader = DataLoader(
@@ -86,14 +89,14 @@ def main():
             batch_size=config.per_device_train_batch_size,
             shuffle=False,
             collate_fn=collator,
-            num_workers=getattr(config, 'dataloader_num_workers', 2)
+            num_workers=0
         )
         
         # Create improved trainer
         trainer = ImprovedSimpleTrainer(model, None, config)
         
         # Train model
-        logger.info("🎯 Starting training...")
+        logger.info("🎯 Starting training (test run)...")
         try:
             trainer.train(
                 train_dataloader=train_dataloader,

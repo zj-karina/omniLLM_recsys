@@ -217,7 +217,9 @@ def prepare_recommendation_data(
     title_field: str = "title",
     max_history_length: int = 10,
     min_history_length: int = 2,
-    random_seed: int = 42
+    random_seed: int = 42,
+    max_users: Optional[int] = None,
+    max_items: Optional[int] = None
 ) -> tuple:
     """
     Prepare recommendation dataset from Hugging Face dataset.
@@ -252,12 +254,25 @@ def prepare_recommendation_data(
     
     # Create item mapping from unique items
     unique_items = df[item_id_field].unique()
+    
+    # Limit items if specified
+    if max_items and len(unique_items) > max_items:
+        unique_items = unique_items[:max_items]
+        logger.info(f"Limited to {max_items} items for testing")
+    
     item2index = {item: idx for idx, item in enumerate(unique_items)}
     logger.info(f"Created item mapping with {len(item2index)} unique items")
     
     # Group by user to create user histories
     logger.info("Creating user histories...")
     user_histories = []
+    
+    # Limit users if specified
+    unique_users = df[user_id_field].unique()
+    if max_users and len(unique_users) > max_users:
+        unique_users = unique_users[:max_users]
+        df = df[df[user_id_field].isin(unique_users)]
+        logger.info(f"Limited to {max_users} users for testing")
     
     for user_id, user_data in df.groupby(user_id_field):
         # Sort by timestamp if available, otherwise by index
@@ -270,11 +285,12 @@ def prepare_recommendation_data(
         item_ids = user_data[item_id_field].tolist()
         titles = user_data[title_field].tolist()
         
-        # Filter out None/NaN values
+        # Filter out None/NaN values and items not in our mapping
         valid_items = []
         valid_titles = []
         for item_id, title in zip(item_ids, titles):
-            if pd.notna(item_id) and pd.notna(title) and str(item_id).strip() != '':
+            if (pd.notna(item_id) and pd.notna(title) and 
+                str(item_id).strip() != '' and item_id in item2index):
                 valid_items.append(item_id)
                 valid_titles.append(str(title).strip())
         
